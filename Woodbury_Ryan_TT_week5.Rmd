@@ -1,0 +1,77 @@
+---
+title: "Tidy Tuesday Week 5-Plastic Pollution"
+author: "Ryan Woodbury"
+date: "1/26/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+theme_set(theme_classic())
+```
+
+
+# Get the Data
+
+## Read in with tidytuesdayR package 
+## Install from CRAN via: install.packages("tidytuesdayR")
+## This loads the readme and all the datasets for the week of interest
+
+## Either ISO-8601 date or year/week works!
+
+
+```{r}
+#tuesdata <- tidytuesdayR::tt_load('2021-01-26')
+tuesdata <- tidytuesdayR::tt_load(2021, week = 5)
+
+plastics <- tuesdata$plastics
+
+# plastics <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-01-26/plastics.csv')
+
+head(plastics)
+```
+# quick summary of data
+
+```{r}
+summary(plastics)
+```
+
+
+```{r}
+glimpse(plastics)
+```
+
+
+```{r}
+plastics_long <- plastics %>%
+  pivot_longer(c(empty:pvc, grand_total), names_to = "type")
+```
+
+Need to do some filtering to remove unknown parent companies.
+
+```{r}
+'%notin%' <- Negate(`%in%`)
+
+plastics_long_filter <- plastics_long %>% 
+  filter(parent_company %notin% c("Unbranded", "null", "empty", "NULL", "Grand Total")) %>% 
+  filter(type != "grand_total")
+```
+
+## The name conventions of the companies are free-response and have a lot inconsistencies. For example, "Johnson & Johnson" and "Johnson and Johnson". Or "The McDonald's Coporation" and "McD" and "McDonald's" I'm sure there are many others.
+
+```{r}
+# Base R string distance
+# The distance is a generalized Levenshtein (edit) distance.
+# Basically, the minimal number of insertions, deletions and substitutions needed to transform one string into another.
+# In the example below, 3 edits are needed (1 replacement, 2 deletions)
+utils::adist("Johnson and Johnson", "Johnson & Johnson")
+```
+
+```{r}
+# Base R fuzzy match
+# Two Johnson and Johnson and SC Johnson are different companies
+# Return the indexs for any fuzzy matches
+base::agrep("Johnson and Johnson", c("Johnson & Johnson", "SC Johnson"), max=3, ignore.case = TRUE)
+```
+

@@ -1,0 +1,78 @@
+---
+title: "Bechdel Test data (Tidy Tuesday - March 9, 2021)"
+author: "Ryan Woodbury"
+date: "3/9/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(tidytuesdayR)
+```
+
+```{r data}
+#tuesdata <- tidytuesdayR::tt_load(2021, week= 11)
+
+raw_bechdel <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-03-09/raw_bechdel.csv')
+movies <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-03-09/movies.csv')
+```
+
+```{r, glimpse, eval = F}
+glimpse(raw_bechdel)
+glimpse(movies)
+```
+
+Make left join to prioritize the Bechdel data.
+
+```{r join}
+bechdel_movies <- raw_bechdel %>% 
+  full_join(movies, by = c("imdb_id" = "imdb_id", "year" = "year", "title" = "title"))
+```
+
+
+```{r, eval = F}
+glimpse(bechdel_movies)
+```
+
+```{r check, eval = F}
+## prioritize the bechdel data
+
+raw_bechdel %>% 
+  filter(year == 2000) %>% 
+  count() # 152
+
+movies %>% 
+  filter(year == 2000) %>% 
+  count() # 63
+
+bechdel_movies %>% 
+  filter(year == 2000) %>% 
+  count() # 152
+```
+
+Who are the directors with the highest proportion of movies that pass the Bechdel test?
+
+I might have to filter out those with only one movie, but we can see how many have only 1 movie directed that passes the Bechdel test.
+
+```{r}
+director_bechdel <- bechdel_movies %>% 
+  filter(!is.na(director)) %>% 
+  group_by(director) %>% 
+  summarize(num_movies = n(),
+    num_bechdel = sum(ifelse(binary == "PASS", 1, 0), na.rm = T), .groups = "keep") %>% 
+  mutate(bechdel_prop = round((num_bechdel/num_movies) * 100, 2)) %>% 
+  arrange(desc(bechdel_prop)) %>% 
+  filter(num_movies > 1) %>% 
+  select(director, bechdel_prop, num_movies)
+```
+
+```{r}
+ggplot(director_bechdel, aes(bechdel_prop)) +
+  geom_histogram(bins = 20)
+```
+
+There are over 50 directors that have directed more than one film that have a 100% pass-rate on the Bechdel Test. This is a simple graph, but due to the fact that most directors are excluded, we can explore another set of variables that might provide some more predictive power.

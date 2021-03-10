@@ -12,6 +12,8 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r libraries}
 library(tidyverse)
 library(tidytuesdayR)
+library(tidymodels)
+library(stacks)
 ```
 
 ```{r data}
@@ -76,3 +78,301 @@ ggplot(director_bechdel, aes(bechdel_prop)) +
 ```
 
 There are over 50 directors that have directed more than one film that have a 100% pass-rate on the Bechdel Test. This is a simple graph, but due to the fact that most directors are excluded, we can explore another set of variables that might provide some more predictive power.
+
+## Predicting Bechdel based on...?
+
+There are a ton of missing data that needs to be taken care of. This is likely an issue of missing at random (at best). We'll just remove those and work with the 991 FAILs and 803 PASSs.
+
+```{r}
+# Binary Logistic
+bechdel_movies %>% 
+  count(binary)
+
+### Use binary for now.
+
+# multinomial Logistic
+bechdel_movies %>% 
+  count(clean_test)
+
+# multinomial Logistic
+# bechdel_movies %>% 
+#   count(test)
+```
+
+```{r filter split}
+# filter
+
+bechdel_movies_binary <- bechdel_movies %>% 
+  filter(!is.na(binary) & !is.na(rating) & !is.na(imdb_rating)) %>% 
+  mutate(binary = as.factor(binary),
+         across(c(domgross_2013, intgross_2013), as.numeric),
+         totalgross_2013 = domgross_2013 + intgross_2013) %>% 
+  select(binary, year, budget_2013, totalgross_2013, rating, imdb_rating)
+```
+```{r, eval = F}
+psych::describe(bechdel_movies_binary)
+
+# I can attempt to impute totalgross_2013
+```
+
+
+
+```{r}
+# split
+set.seed(64)
+bechdel_split <- initial_split(bechdel_movies_binary, strata = binary)
+bechdel_train <- training(bechdel_split)
+bechdel_test <- testing(bechdel_split)
+
+# validation
+#bechdel_val <- validation_split(bechdel_train, strata = binary, prop = .8)
+```
+
+```{r}
+set.seed(64)
+folds <- rsample::vfold_cv(bechdel_train, v = 5)
+
+bechdel_recipe <- recipe(binary ~ year + budget_2013 + totalgross_2013 + rating + imdb_rating, data = bechdel_train) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>% 
+  step_impute_linear(totalgross_2013) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_predictors())
+
+metric <- metric_set(roc_auc, accuracy, kap, pr_auc, mn_log_loss)
+```
+
+
+```{r}
+ctrl_grid <- control_stack_grid()
+ctrl_res <- control_stack_resamples()
+```
+
+
+```{r knn}
+knn_spec <- 
+  nearest_neighbor(
+    mode = "classification",
+    neighbors = tune("k")
+  ) %>% 
+  set_engine("kknn")
+knn_spec
+```
+
+
+```{r}
+knn_rec <- bechdel_recipe
+
+knn_rec
+```
+
+
+```{r}
+knn_workflow <- workflow() %>% 
+  add_model(knn_spec) %>% 
+  add_recipe(knn_rec)
+
+knn_workflow
+```
+
+```{r}
+set.seed(64)
+knn_res <- tune_grid(
+  knn_workflow,
+  resamples = folds,
+  metrics = metric,
+  grid = 4,
+  control = ctrl_grid
+)
+
+knn_res
+```
+```{r}
+log_reg_spec <- logistic_reg(penalty = tune(), mixture = 1) %>% 
+  set_engine("glmnet")
+
+log_reg_rec <- bechdel_recipe
+
+log_reg_workflow <- workflow() %>% 
+  add_model(log_reg_spec) %>% 
+  add_recipe(log_reg_rec)
+
+log_reg_grid <- tibble(penalty = 10^seq(-4, -1, length.out = 30))
+
+set.seed(64)
+log_reg_res <- log_reg_workflow %>% 
+  tune_grid(
+    resamples = folds,
+  grid = log_reg_grid,
+  metrics = metric,
+  control = ctrl_res
+)
+log_reg_res
+```
+
+```{r}
+bedchal_stacks <- stacks() %>% 
+  add_candidates(knn_res) %>% 
+  add_candidates(log_reg_res)
+
+bedchal_stacks
+```
+
+```{r}
+as_tibble(bedchal_stacks)
+```
+
+```{r}
+bedchal_stacks_model <- bedchal_stacks %>% 
+  blend_predictions()
+```
+
+```{r}
+theme_set(theme_classic())
+autoplot(bedchal_stacks_model)
+```
+```{r}
+autoplot(bedchal_stacks_model, type = "members")
+```
+```{r}
+autoplot(bedchal_stacks_model, type = "weights")
+```
+```{r}
+bedchal_stacks_model <- bedchal_stacks_model %>% 
+  fit_members()
+```
+
+
+```{r}
+collect_parameters(bedchal_stacks_model, "log_reg_res")
+```
+
+```{r}
+bechdel_test_class <- bechdel_test %>% 
+  bind_cols(predict(bedchal_stacks_model, .))
+
+bechdel_test_probs <- bechdel_test %>% 
+  bind_cols(predict(bedchal_stacks_model, ., type = "prob"))
+
+bechdel_preds <- bechdel_test %>% 
+  select(binary) %>% 
+  bind_cols(predict(bedchal_stacks_model, bechdel_test, members = T))
+```
+
+
+```{r}
+map_dfr(bechdel_test_probs, .f = roc_auc, estimate = .pred_PASS, truth = binary, data = bechdel_test_probs)
+```
+
+The member models and blended model all perform the same.
+
+Need to figure out how to plot a roc_auc_curve, but I'm getting class predictions not prediciton probabilities. However, I do like my accuracy. For the blended model (and all member models), the accuracy is .9042.
+
+Now I need to interpret this.
+
+
+
+
+```{r}
+ggplot(bechdel_test_class) + 
+  aes(x = binary, y = .pred_class...7) +
+  geom_jitter()
+```
+
+I fit a stack of models, but only get logistic regression to get me the better fit. The KNN got blended out in my blend_predictions()...?
+
+```{r, eval = F}
+autoplot(roc_curve(bechdel_test_probs, truth = binary, estimates = .pred_FAIL))
+```
+
+Well, not a bad model, but I still need to interpret things. However, I used regularization, so the interpretation is not going to be as straight forward as I'd like. Basically, what I could say is that this blended regularized logistic model has a high accuracy, AUC, and succeeds at other metrics. Indeed, it seemed to have beat out the KNN models in the stack.
+
+
+
+
+
+
+
+
+
+
+
+###############
+```{r logistic_regression}
+bechdel_lm <- logistic_reg(penalty = tune(), mixture = 1) %>% 
+  set_engine("glmnet") 
+
+#%>% 
+#  fit(binary ~ ., data = bake(bechdel_recipe, new_data = bechdel_train))
+
+
+
+```
+
+```{r}
+lr_workflow <- workflow() %>% 
+  add_model(bechdel_lm) %>% 
+  add_recipe(bechdel_recipe)
+```
+
+```{r}
+lr_regu_grid <- tibble(penalty = 10^seq(-4, -1, length.out = 30))
+```
+
+```{r}
+bechdel_results <- lr_workflow %>% 
+  tune_grid(grid = lr_regu_grid,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(roc_auc))
+```
+
+```{r}
+bechdel_results %>% metrics(truth = binary, estimate = .pred_class)
+
+ggplot(bechdel_results, aes(x = .pred_class, y = binary)) +
+  geom_jitter()
+
+conf_mat(bechdel_results, truth = binary, estimate = .pred_class)
+
+accuracy(bechdel_results, truth = binary, estimate = .pred_class)
+spec(bechdel_results, truth = binary, estimate = .pred_class)
+sens(bechdel_results, truth = binary, estimate = .pred_class)
+```
+
+```{r}
+roc_curve(bechdel_results, binary, PASS)
+```
+
+
+```{r, eval = F}
+
+bechdel_lm_wf <- workflow() %>% 
+  add_model(bechdel_lm) %>% 
+  add_recipe(bechdel_recipe)
+```
+
+```{r tuning, eval = F}
+lr_reg_grid <- tibble(penalty = 10^seq(-4, -1, length.out = 30))
+
+```
+
+```{r, eval = F}
+lr_result <- bechdel_lm_wf %>% 
+  tune_grid(bechdel_val,
+            grid = lr_reg_grid,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(roc_auc))
+```
+
+```{r, eval = F}
+lr_plot <- 
+  lr_res %>% 
+  collect_metrics() %>% 
+  ggplot(aes(x = penalty, y = mean)) + 
+  geom_point() + 
+  geom_line() + 
+  ylab("Area under the ROC Curve") +
+  scale_x_log10(labels = scales::label_number())
+
+lr_plot 
+```
+

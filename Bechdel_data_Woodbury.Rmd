@@ -280,7 +280,7 @@ ggplot(bechdel_test_class) +
 
 I fit a stack of models, but only get logistic regression to get me the better fit. The KNN got blended out in my blend_predictions()...?
 
-```{r, eval = F}
+```{r}
 autoplot(roc_curve(bechdel_test_probs, truth = binary, estimates = .pred_FAIL))
 ```
 
@@ -297,7 +297,7 @@ Well, not a bad model, but I still need to interpret things. However, I used reg
 
 
 ###############
-```{r logistic_regression}
+```{r logistic_regression, eval = F}
 bechdel_lm <- logistic_reg(penalty = tune(), mixture = 1) %>% 
   set_engine("glmnet") 
 
@@ -308,24 +308,24 @@ bechdel_lm <- logistic_reg(penalty = tune(), mixture = 1) %>%
 
 ```
 
-```{r}
+```{r, eval = F}
 lr_workflow <- workflow() %>% 
   add_model(bechdel_lm) %>% 
   add_recipe(bechdel_recipe)
 ```
 
-```{r}
+```{r, eval = F}
 lr_regu_grid <- tibble(penalty = 10^seq(-4, -1, length.out = 30))
 ```
 
-```{r}
+```{r, eval = F}
 bechdel_results <- lr_workflow %>% 
   tune_grid(grid = lr_regu_grid,
             control = control_grid(save_pred = TRUE),
             metrics = metric_set(roc_auc))
 ```
 
-```{r}
+```{r, eval = F}
 bechdel_results %>% metrics(truth = binary, estimate = .pred_class)
 
 ggplot(bechdel_results, aes(x = .pred_class, y = binary)) +
@@ -338,7 +338,7 @@ spec(bechdel_results, truth = binary, estimate = .pred_class)
 sens(bechdel_results, truth = binary, estimate = .pred_class)
 ```
 
-```{r}
+```{r, eval = F}
 roc_curve(bechdel_results, binary, PASS)
 ```
 

@@ -327,7 +327,11 @@ ggplot(bechdel_test_class, aes(x = binary, y = .pred_class)) +
 
 I fit a stack of models, but only get logistic regression to get me the better fit. The KNN got blended out in my blend_predictions()...?
 
+<<<<<<< HEAD
 ```{r, eval = T}
+=======
+```{r}
+>>>>>>> 2fa00fb1a30a8ff59053fa95c7bb88da502295e6
 autoplot(roc_curve(bechdel_test_probs, truth = binary, estimates = .pred_FAIL))
 ```
 

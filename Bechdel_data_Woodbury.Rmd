@@ -2,19 +2,28 @@
 title: "Bechdel Test data (Tidy Tuesday - March 9, 2021)"
 author: "Ryan Woodbury"
 date: "3/9/2021"
-output: html_document
+output: 
+  html_document:
+    code_folding: hide
+    keep_md: true
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+This is my first attempt at using `tidymodels` and the first time I'm using `stacks`. I'm going to be copying and pasting a lot of code from the online guides (which I should reference).
+
 ```{r libraries}
-library(tidyverse)
-library(tidytuesdayR)
-library(tidymodels)
-library(stacks)
+library(tidyverse) # data manipulation
+library(tidytuesdayR) # Tidy Tuesday data
+library(tidymodels) # Modeling!
+library(stacks) # Ensemble methods
+library(gt) # html tables
+theme_set(theme_classic())
 ```
+
+I'm using the `readr` package to pull the files from github since the Tidy Tuesday tt_load() wasn't working for me.
 
 ```{r data}
 #tuesdata <- tidytuesdayR::tt_load(2021, week= 11)
@@ -28,7 +37,11 @@ glimpse(raw_bechdel)
 glimpse(movies)
 ```
 
-Make left join to prioritize the Bechdel data.
+I'm not going to display the data here... just because.
+
+I want to create a full data set that contains as many variables as I can have to predict which movies passed the Bechdel test.
+
+Make full join to keep all the variables!
 
 ```{r join}
 bechdel_movies <- raw_bechdel %>% 
@@ -53,8 +66,10 @@ movies %>%
 
 bechdel_movies %>% 
   filter(year == 2000) %>% 
-  count() # 152
+  count() # 154
 ```
+
+### Quick look at directors
 
 Who are the directors with the highest proportion of movies that pass the Bechdel test?
 
@@ -74,52 +89,63 @@ director_bechdel <- bechdel_movies %>%
 
 ```{r}
 ggplot(director_bechdel, aes(bechdel_prop)) +
-  geom_histogram(bins = 20)
+  geom_histogram(bins = 20) +
+  labs(title = str_wrap("Histogram of Directors' Proportion of Films passing the Bechdel Test", 60),
+       x = "Proportion of films passing the Bechdel Test",
+       caption = "Only directors with more than 1 film are included.")
 ```
 
 There are over 50 directors that have directed more than one film that have a 100% pass-rate on the Bechdel Test. This is a simple graph, but due to the fact that most directors are excluded, we can explore another set of variables that might provide some more predictive power.
 
 ## Predicting Bechdel based on...?
 
-There are a ton of missing data that needs to be taken care of. This is likely an issue of missing at random (at best). We'll just remove those and work with the 991 FAILs and 803 PASSs.
+There are a ton of missing data that needs to be taken care of (n = 7113). Most movies after 2013 have not been coded whether or not they have passed the Bechdel test. (What?!) We'll just remove those and work with the 991 FAILs and 803 PASSs. The missing values after 2013 and prior to 1970 are worrisome. Come on Bechdel testers, start watching more films!
 
 ```{r}
 # Binary Logistic
 bechdel_movies %>% 
-  count(binary)
+  count(year, binary) %>%
+  gt_preview(top_n = 5, bottom_n = 5, incl_rownums = F) %>% 
+  tab_header(title = "Top and Bottom years", subtitle = "Quick peek at missing data at the extreme years.")
 
 ### Use binary for now.
 
 # multinomial Logistic
-bechdel_movies %>% 
-  count(clean_test)
+# bechdel_movies %>%
+#   count(clean_test)
 
 # multinomial Logistic
 # bechdel_movies %>% 
 #   count(test)
 ```
 
-```{r filter split}
+Here is the clean data. I also create a new variable called `totalgross_2013`, which is just a simple sum of domestic and international gross (2013 adjusted). I should probably just keep the domestic and international gross, but the imputation isn't working as expected and I need complete data for the models.
+
+```{r filter}
 # filter
 
 bechdel_movies_binary <- bechdel_movies %>% 
   filter(!is.na(binary) & !is.na(rating) & !is.na(imdb_rating)) %>% 
   mutate(binary = as.factor(binary),
-         across(c(domgross_2013, intgross_2013), as.numeric),
-         totalgross_2013 = domgross_2013 + intgross_2013) %>% 
+         across(c(domgross_2013, intgross_2013), as.numeric)) %>% 
+  rowwise() %>% 
+  mutate(totalgross_2013 = mean(domgross_2013, intgross_2013, na.rm = T)) %>% 
+  ungroup() %>% 
   select(binary, year, budget_2013, totalgross_2013, rating, imdb_rating)
 ```
 ```{r, eval = F}
 psych::describe(bechdel_movies_binary)
 
+skimr::skim(bechdel_movies_binary)
 # I can attempt to impute totalgross_2013
 ```
 
 
+In order to perform predictive modeling, the data set has to be split into training and test sets. This allows us to build and evaluate a model on training data, while withholding a test set. After the model is properly tuned, it can be assessed using the test set. This helps check for the model's generalizabilty and gives us a clue to if we are over-fitting or under-fitting a model.
 
-```{r}
+```{r split it}
 # split
-set.seed(64)
+set.seed(64) # set seed for reproducibilty
 bechdel_split <- initial_split(bechdel_movies_binary, strata = binary)
 bechdel_train <- training(bechdel_split)
 bechdel_test <- testing(bechdel_split)
@@ -128,7 +154,12 @@ bechdel_test <- testing(bechdel_split)
 #bechdel_val <- validation_split(bechdel_train, strata = binary, prop = .8)
 ```
 
-```{r}
+
+Here I am building a "recipe" that will set up the model and do some pre-processing of data. This recipe can be used for to replicate the same steps for different models. I'm dummy coding nominal data, imputing the two continuous variables (domestic and international gross), removing predictors with no variance, and normalizing all predictors.
+
+I have also selected a set of metrics I want to include in my assessment of the models.
+
+```{r recipe}
 set.seed(64)
 folds <- rsample::vfold_cv(bechdel_train, v = 5)
 
@@ -141,12 +172,16 @@ bechdel_recipe <- recipe(binary ~ year + budget_2013 + totalgross_2013 + rating 
 metric <- metric_set(roc_auc, accuracy, kap, pr_auc, mn_log_loss)
 ```
 
+These are my, currenlty empty, grid and resample spaces to tune the models.
 
 ```{r}
-ctrl_grid <- control_stack_grid()
+ctrl_grid <- control_stack_grid() # From my understanding save_pred = T is the default for control_stack_*() functions
 ctrl_res <- control_stack_resamples()
 ```
 
+## K-Nearest Neighbor
+
+A "lazy" model that just uses the data itself and the distances between points to estimate predictions.
 
 ```{r knn}
 knn_spec <- 
@@ -186,6 +221,10 @@ knn_res <- tune_grid(
 
 knn_res
 ```
+### Penalized linear regression (Pure Lasso)
+
+Here I am able to apply the same recipe, create a tuning grid and push through a workflow
+
 ```{r}
 log_reg_spec <- logistic_reg(penalty = tune(), mixture = 1) %>% 
   set_engine("glmnet")
@@ -209,83 +248,96 @@ log_reg_res <- log_reg_workflow %>%
 log_reg_res
 ```
 
+#### Stacking the models into one ensemble
+
+I'm add the grids and resamples from the two different models to explore how they predict passing or failing the Bechdel test.
+
 ```{r}
-bedchal_stacks <- stacks() %>% 
+bechdel_stacks <- stacks() %>% 
   add_candidates(knn_res) %>% 
   add_candidates(log_reg_res)
 
-bedchal_stacks
+bechdel_stacks
 ```
 
 ```{r}
-as_tibble(bedchal_stacks)
+as_tibble(bechdel_stacks)
 ```
 
 ```{r}
-bedchal_stacks_model <- bedchal_stacks %>% 
+bechdel_stacks_model <- bechdel_stacks %>% 
   blend_predictions()
 ```
 
 ```{r}
 theme_set(theme_classic())
-autoplot(bedchal_stacks_model)
+autoplot(bechdel_stacks_model)
 ```
 ```{r}
-autoplot(bedchal_stacks_model, type = "members")
+autoplot(bechdel_stacks_model, type = "members")
 ```
 ```{r}
-autoplot(bedchal_stacks_model, type = "weights")
+autoplot(bechdel_stacks_model, type = "weights")
 ```
 ```{r}
-bedchal_stacks_model <- bedchal_stacks_model %>% 
+bechdel_stacks_model <- bechdel_stacks_model %>% 
   fit_members()
 ```
 
 
 ```{r}
-collect_parameters(bedchal_stacks_model, "log_reg_res")
+collect_parameters(bechdel_stacks_model, "log_reg_res")
 ```
 
 ```{r}
 bechdel_test_class <- bechdel_test %>% 
-  bind_cols(predict(bedchal_stacks_model, .))
+  bind_cols(predict(bechdel_stacks_model, .))
 
 bechdel_test_probs <- bechdel_test %>% 
-  bind_cols(predict(bedchal_stacks_model, ., type = "prob"))
+  bind_cols(predict(bechdel_stacks_model, ., type = "prob"))
 
 bechdel_preds <- bechdel_test %>% 
   select(binary) %>% 
-  bind_cols(predict(bedchal_stacks_model, bechdel_test, members = T))
+  bind_cols(predict(bechdel_stacks_model, bechdel_test, members = T))
 ```
 
 
-```{r}
-map_dfr(bechdel_test_probs, .f = roc_auc, estimate = .pred_PASS, truth = binary, data = bechdel_test_probs)
+```{r, eval = F}
+map_dfr(bechdel_test_probs, .f = accuracy, truth = binary, data = bechdel_test_probs)
 ```
 
-The member models and blended model all perform the same.
+The logistic regression member models and blended model all perform the same.
 
-Need to figure out how to plot a roc_auc_curve, but I'm getting class predictions not prediciton probabilities. However, I do like my accuracy. For the blended model (and all member models), the accuracy is .9042.
+I'm getting class predictions not prediciton probabilities. However, I do like my accuracy. For the blended model (and all member models), the accuracy is .
 
 Now I need to interpret this.
 
 
 
+Tried to make a waffle-like chart, ya know, like pancake `stacks` and waffle charts?
+```{r waffle, eval = F}
+bechdel_test_class_n <- bechdel_test_class %>% 
+  group_by(binary, .pred_class) %>% 
+  count()
 
-```{r}
-ggplot(bechdel_test_class) + 
-  aes(x = binary, y = .pred_class...7) +
-  geom_jitter()
+ggplot(bechdel_test_class, aes(x = binary, y = .pred_class)) + 
+  geom_tile(aes(fill = after_stat(count))) +
+  scale_fill_gradient()
 ```
 
 I fit a stack of models, but only get logistic regression to get me the better fit. The KNN got blended out in my blend_predictions()...?
 
-```{r, eval = F}
+```{r, eval = T}
 autoplot(roc_curve(bechdel_test_probs, truth = binary, estimates = .pred_FAIL))
 ```
 
 Well, not a bad model, but I still need to interpret things. However, I used regularization, so the interpretation is not going to be as straight forward as I'd like. Basically, what I could say is that this blended regularized logistic model has a high accuracy, AUC, and succeeds at other metrics. Indeed, it seemed to have beat out the KNN models in the stack.
 
+
+I feel like I created a black box logistic regression, which is not what I wanted to do.
+
+
+Overall, it was fun to try the stacked models. I will definitely need to explore the output so I understand how objects are moving from one step to the next and so that I can extract and visual what I think is useful and important, especially the best fitting model! I would like a clearer comparison amongst the models' metrics as well.
 
 
 
@@ -297,7 +349,7 @@ Well, not a bad model, but I still need to interpret things. However, I used reg
 
 
 ###############
-```{r logistic_regression}
+```{r logistic_regression, eval = F}
 bechdel_lm <- logistic_reg(penalty = tune(), mixture = 1) %>% 
   set_engine("glmnet") 
 
@@ -308,24 +360,24 @@ bechdel_lm <- logistic_reg(penalty = tune(), mixture = 1) %>%
 
 ```
 
-```{r}
+```{r, eval = F}
 lr_workflow <- workflow() %>% 
   add_model(bechdel_lm) %>% 
   add_recipe(bechdel_recipe)
 ```
 
-```{r}
+```{r, eval = F}
 lr_regu_grid <- tibble(penalty = 10^seq(-4, -1, length.out = 30))
 ```
 
-```{r}
+```{r, eval = F}
 bechdel_results <- lr_workflow %>% 
   tune_grid(grid = lr_regu_grid,
             control = control_grid(save_pred = TRUE),
             metrics = metric_set(roc_auc))
 ```
 
-```{r}
+```{r, eval = F}
 bechdel_results %>% metrics(truth = binary, estimate = .pred_class)
 
 ggplot(bechdel_results, aes(x = .pred_class, y = binary)) +
@@ -338,7 +390,7 @@ spec(bechdel_results, truth = binary, estimate = .pred_class)
 sens(bechdel_results, truth = binary, estimate = .pred_class)
 ```
 
-```{r}
+```{r, eval = F}
 roc_curve(bechdel_results, binary, PASS)
 ```
 

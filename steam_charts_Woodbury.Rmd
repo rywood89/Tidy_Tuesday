@@ -24,6 +24,7 @@ library(lubridate) # Date time functions
 library(ggiraph) # interactive plots
 library(ggfx) # lightsaber effect?
 library(ggtext)
+library(ggsci)
 
 #library(ggthemes) # doesn't work with plotly
 

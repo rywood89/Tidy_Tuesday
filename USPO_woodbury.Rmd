@@ -1,0 +1,57 @@
+---
+title: "US Postal Offices (Tidy Tuesday - April 13, 2021)"
+author: "Ryan Woodbury"
+date: "4/13/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+library(tidyverse) # data manipulation
+library(tidytuesdayR) # Tidy Tuesday data
+#library(tidymodels) # Modeling!
+#library(stacks) # Ensemble methods
+#library(gt) # html tables
+library(lubridate) # Date time functions
+#library(plotly) # interactive plots
+library(ggiraph) # interactive plots
+library(ggfx) # lightsaber effect?
+library(ggtext)
+library(ggsci)
+
+#library(ggthemes) # doesn't work with plotly
+
+#library(ggimage)
+#library(extrafont)
+#library(scales)
+
+theme_set(theme_classic())
+```
+
+```{r}
+post_offices <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-04-13/post_offices.csv')
+
+View(post_offices)
+glimpse(post_offices)
+```
+
+```{r}
+summary(post_offices)
+```
+
+```{r}
+po_clean <- post_offices %>% 
+  filter(established > 1600,
+         discontinued < 2021,
+         duration > 0) %>% 
+  group_by(id) %>% 
+  mutate(active_year = list(seq(established, discontinued, by = 1))) %>% 
+  unnest(cols = c(active_year))
+
+  ggplot(aes(x = latitude, y = longitude)) +
+  coord_map()
+```
+

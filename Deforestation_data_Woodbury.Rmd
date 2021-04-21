@@ -1,0 +1,80 @@
+---
+title: "Deforestation (Tidy Tuesday - April 6, 2021)"
+author: "Ryan Woodbury"
+date: "4/6/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Loading libraries
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(tidyverse) # data manipulation
+library(tidytuesdayR) # Tidy Tuesday data
+library(tidymodels) # Modeling!
+library(stacks) # Ensemble methods
+library(gt) # html tables
+library(DataExplorer)
+library(SmartEDA)
+theme_set(theme_classic())
+```
+
+Getting the data
+
+```{r message=FALSE, warning=FALSE}
+# Get the Data
+
+# Read in with tidytuesdayR package 
+# Install from CRAN via: install.packages("tidytuesdayR")
+# This loads the readme and all the datasets for the week of interest
+
+# Either ISO-8601 date or year/week works!
+
+# tuesdata <- tidytuesdayR::tt_load('2021-04-06')
+# tuesdata <- tidytuesdayR::tt_load(2021, week = 15)
+
+#forest_change <- tuesdata$forest_change
+
+# Or read in the data manually
+
+forest <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-04-06/forest.csv')
+forest_area <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-04-06/forest_area.csv')
+brazil_loss <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-04-06/brazil_loss.csv')
+soybean_use <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-04-06/soybean_use.csv')
+vegetable_oil <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-04-06/vegetable_oil.csv')
+```
+
+Quick exploration of data
+
+Comparing DataExplorer, SmartEDA, and skimr
+
+The default report creator functions from `DataExplorer::` (`create_report()`) and `SmartEDA::` (`ExpReport()`) don't work on these smaller data sets, but `skimr` works fine. The `psych::` package also has a data explorer/summarizer as well.
+
+I can select what I want built from `DataExplorer` or `SmartEDA`, but I cannot render a full html report.
+
+```{r}
+summary(forest)
+glimpse(forest)
+#DataExplorer::create_report(forest)
+introduce(forest)
+plot_intro(forest)
+plot_missing(forest)
+#plot_bar(forest)
+
+
+skimr::skim(forest)
+```
+
+```{r}
+summary(forest_area)
+glimpse(forest_area)
+SmartEDA::ExpData(forest_area, type = 1)
+SmartEDA::ExpData(forest_area, type = 2)
+#SmartEDA::ExpReport(forest_area, op_file = "forest_area_report.html", sc = 2, sn = 2)
+
+ExpNumStat(forest_area)
+```
+

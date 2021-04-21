@@ -1,0 +1,376 @@
+---
+title: "Netflix Netflix Netflix"
+author: "Ryan Woodbury"
+date: "4/20/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(tidyverse) # data manipulation
+library(tidytuesdayR) # Tidy Tuesday data
+library(tidymodels) # Modeling!
+library(ranger)
+library(kernlab)
+library(xgboost)
+library(stacks) # Ensemble methods
+library(gt) # html tables
+library(corrplot)
+library(correlation)
+library(lubridate)
+library(DataExplorer)
+library(SmartEDA)
+theme_set(theme_classic())
+```
+
+
+```{r data}
+netflix_titles <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-04-20/netflix_titles.csv')
+glimpse(netflix_titles)
+```
+
+Potential cleaning work
+- split by `type` so that I can work with `rating` and `duration` in a clean way. Everything else is common enough between TV Show or Movie.
+
+```{r}
+netflix_titles %>% 
+  count(type)
+```
+
+```{r TV clean}
+netflix_tv <- netflix_titles %>% 
+  filter(type == "TV Show") %>% 
+  #mutate(season_check = str_detect(duration, "\\d+")) %>% 
+  #summarise(season_check_sum = sum(season_check))
+  mutate(seasons = str_extract(duration, "\\d+"),
+         seasons = as.numeric(seasons))
+```
+
+```{r movie clean}
+netflix_movie <- netflix_titles %>% 
+  filter(type == "Movie") %>% 
+  #mutate(time_check = str_detect(duration, "\\d+")) %>% 
+  #summarise(time_check_sum = sum(time_check))
+  mutate(duration = str_extract(duration, "\\d+"),
+         duration = as.numeric(duration),
+         date_added = mdy(date_added),
+         date_diff = year(date_added) - release_year)
+
+netflix_m_genre_long <- netflix_movie %>% 
+  separate(listed_in, into = c("genre_1", "genre_2", "genre_3"), sep = ", ") %>% 
+  pivot_longer(cols = genre_1:genre_3, names_to = "genre", values_to = "value", values_drop_na = TRUE)
+
+netflix_m_genre_wide <- netflix_m_genre_long %>% 
+  pivot_wider(id_cols = -c(genre, value), names_from = value) %>% 
+  janitor::clean_names() %>% 
+  mutate(across(.cols = dramas:anime_features, .fns = ~ifelse(!is.na(.x) == TRUE, 1, 0)))
+
+```
+
+
+### Some fun questions:
+TV shows
+- What shows have the most seasons? From different countries?
+- 
+
+```{r}
+netflix_tv %>% arrange(desc(seasons)) %>% slice_max(seasons, n = 10) %>% 
+  ggplot(aes(x = fct_reorder(title, -seasons), y = seasons)) +
+  geom_col() +
+  coord_flip() +
+  labs(x = "Movie Titles")
+```
+
+
+Movies
+- What is the average date between release and added to Netflix? Does this relate to anything? Country of origin? Title? Director?
+- It would be cool to know which movies are Netflix originals (straight to Netflix) so I could predict that based on some of these variables.
+- What is going on with genre? 
+
+```{r}
+netflix_m_genre_long %>% count(value) %>% 
+  arrange(desc(n))
+```
+```{r}
+
+netflix_genres_only <- netflix_m_genre_wide %>% 
+  select(dramas:anime_features)
+
+corrplot::corrplot(cor(netflix_genres_only), type = "upper")
+```
+It's such a sparse data set that the correlations are difficult to see. This is fine. I'm actually fine with the fact that the genres don't highly correlate with each other, suggesting that they could all be used as unique predictors for a model.
+
+But what should we model?
+- duration?
+- date difference?
+
+Let's try to model date difference. I can use data difference as a proxy for a "Netflix Original" too and create a binary outcome if I wanted to explore that.
+
+I am getting rid of any rating with less than 6 movies because it messes with the KNN model (and probably other models). This also removes the `NA` ratings too.
+
+```{r}
+netflix_m_select_wide <- netflix_m_genre_wide %>% 
+  select(-c(show_id, type, title:cast, description, country)) %>% 
+  mutate(netflix_original_proxy = ifelse(date_diff == 0, 1, 0))
+
+## binary outcome of proxy Netflix Original
+netflix_m_select_wide_NOdate_diff <- netflix_m_select_wide %>% 
+  select(-date_diff) %>% 
+  mutate(netflix_original_proxy = as.factor(netflix_original_proxy)) %>% 
+  filter(rating > 6)
+
+skimr::skim(netflix_m_select_wide_NOdate_diff)
+netflix_m_select_wide_NOdate_diff %>% count(rating)
+```
+
+```{r}
+set.seed(420) ## YEAH! Only for today!
+movies_split_orig <- initial_split(netflix_m_select_wide_NOdate_diff, strata = netflix_original_proxy)
+movie_orig_train <- training(movies_split_orig)
+movie_orig_test <- testing(movies_split_orig)
+
+## Random split for either binary outcome of proxy Netflix Original or date difference
+movies_split <- initial_split(netflix_m_select_wide)
+movie_train <- training(movies_split)
+movie_test <- testing(movies_split)
+```
+
+I have created two splits: a stratified split based on the proxy for whether or not a movie is a Netflix Original and a random split to explore the date difference between when the movie was released and when it was added to Netflix.
+
+For now, I'm going to focus on the binary outcome since I think it answers a clearer questions: Can we predict which movies are (proxy) Netflix Originals?
+
+And how would we predict this? With {stacks} of course!!
+
+
+Set-up the overall recipe of the models. I've already selected the set of variables I want to use as predictors, so I'm going to all of the variables I can for prediction. The recipe also includes dummy coding variables I haven't done myself (e.g., `rating`) and removing any variables that have no variance.
+
+```{r base rate}
+movie_orig_train %>% 
+  group_by(netflix_original_proxy) %>%
+  summarise(number_of_movies = n()) %>% 
+  ungroup() %>% 
+  mutate(proportion = number_of_movies/sum(number_of_movies))
+```
+
+
+Within this chunk I'm also setting up a 5-fold cross-validation and selecting a set of metrics to help tune my models. roc_auc is the Area under the ROC curve, which is the sensitivity vs. 1- specificity rates of the final model. AUC are always above .5 or the base rate of the outcome, whichever is higher. Accuracy is the number of correctly predicted observations over all the predicted observations. Accuracy ranges from .00 to 1.00, but having a value above the base rate is expected. A good accuracy rate would be be well above the base rate.
+
+```{r recipe}
+set.seed(420)
+
+folds <- rsample::vfold_cv(movie_orig_train, v = 5)
+
+movie_orig_rec <- recipe(netflix_original_proxy ~ ., data = movie_orig_train) %>% 
+  #step_num2factor(all_predictors(), levels = c("No", "Yes")) %>%
+  #step_modeimpute(all_nominal(), -all_outcomes()) %>% 
+  #step_knnimpute(all_predictors(), neighbors = 5) %>% 
+  step_zv(all_numeric()) %>% 
+  step_dummy(rating)
+
+metric <- metric_set(roc_auc, accuracy, kap, pr_auc, mn_log_loss)
+```
+
+Getting the tuning grids ready
+
+```{r tuning}
+ctrl_grid <- control_stack_grid()
+ctrl_resamples <- control_stack_resamples()
+```
+
+## KNN
+
+```{r knn}
+knn_spec <- 
+  nearest_neighbor(
+    mode = "classification",
+    neighbors = tune("k")
+  ) %>% 
+  set_engine("kknn")
+
+knn_rec <- movie_orig_rec
+
+knn_workflow <- workflow() %>% 
+  add_model(knn_spec) %>% 
+  add_recipe(knn_rec)
+
+set.seed(420)
+knn_res <- tune_grid(
+  knn_workflow,
+  resamples = folds,
+  metrics = metric,
+  grid = 4,
+  control = ctrl_grid
+); beepr::beep(8)
+```
+
+## Penalized regression
+
+glm is not happy with the lack of tuning.
+glmnet is throwing errors about a sparse matrix
+
+```{r, eval = F}
+log_reg_spec <- logistic_reg(penalty = tune(), mixture = 1) %>% 
+  set_engine("glmnet") %>% 
+  set_mode("classification")
+
+log_reg_workflow <- workflow() %>% 
+  add_model(log_reg_spec) %>% 
+  add_recipe(movie_orig_rec)
+
+log_reg_grid <- tibble(penalty = 10^seq(-4, -1, length.out = 30))
+
+set.seed(420)
+log_reg_res <- log_reg_workflow %>% 
+  tune_grid(
+    resamples = folds,
+    grid = log_reg_grid,
+    metrics = metric,
+    control = ctrl_resamples
+)
+```
+
+
+## Random Forest
+```{r}
+rf_spec <-
+  rand_forest(mode = "classification",
+              mtry = tune(),
+              trees = 1000,
+              min_n = tune()) %>% 
+  set_engine("ranger", importance = "impurity")
+
+tune_wf <- workflow() %>%
+  add_recipe(movie_orig_rec) %>%
+  add_model(rf_spec)
+
+set.seed(420)
+
+
+mt_folds <- vfold_cv(movie_orig_train)
+
+doParallel::registerDoParallel()
+
+set.seed(420)
+rf_fit <- tune_grid(
+  tune_wf,
+  resamples = folds,
+  grid = 20,
+  control = ctrl_grid,
+  metrics = metric
+)
+```
+
+
+## Support Vector Machine.... ?
+```{r}
+svm_mod <-
+  svm_rbf(mode = "classification", cost = tune(), rbf_sigma = tune()) %>%
+  set_engine("kernlab")
+
+svm_wflow <-
+  workflow() %>%
+  add_model(svm_mod) %>%
+  add_recipe(movie_orig_rec)
+
+svm_set <- parameters(svm_wflow)
+
+set.seed(420)
+search_res <-
+  svm_wflow %>% 
+  tune_grid(
+  #   resamples = folds,
+  # metrics = my_metrics,
+  # grid = 4,
+  # control = ctrl_grid
+    resamples = folds,
+    # To use non-default parameter ranges
+    param_info = svm_set,
+    # Generate five at semi-random to start
+    initial = 5,
+    iter = 50,
+    # How to measure performance?
+    metrics = metric,
+    control = ctrl_resamples
+  )
+```
+
+## XG Boost
+```{r, eval = F}
+xgboost_spec <-
+  boost_tree(mode = "classification",
+             mtry = tune(),
+             trees = 1000,
+             min_n = tune(),
+             tree_depth = 3) %>% 
+  set_engine("xgboost")
+
+xgboost_workflow <- workflow() %>% 
+  add_model(xgboost_spec) %>% 
+  add_recipe(movie_orig_rec)
+
+set.seed(420)
+xgboost_fit <- tune_grid(
+  xgboost_workflow,
+  resamples = folds,
+  metrics = metric,
+  control = ctrl_grid
+)
+```
+
+
+
+
+## Stacks on Stacks on Stacks
+KNN, --penalized regression--, random forest, --XG boost--, SVM
+
+```{r stacks}
+netflix_movie_stacks <- stacks() %>% 
+  add_candidates(knn_res) %>% 
+  #add_candidates(log_reg_res) %>% 
+  add_candidates(rf_fit) %>% 
+  #add_candidates(xgboost_fit) %>% 
+  add_candidates(search_res)
+
+netflix_movie_stacks
+```
+
+```{r}
+netflix_movie_stack_model <- netflix_movie_stacks %>% 
+  blend_predictions()
+
+netflix_movie_stack_model_members <- netflix_movie_stack_model %>%
+  fit_members()
+```
+
+```{r}
+autoplot(netflix_movie_stack_model)
+autoplot(netflix_movie_stack_model, "weights")
+autoplot(netflix_movie_stack_model, "members")
+```
+
+```{r}
+netflix_movie_test_class <- movie_orig_test %>% 
+  bind_cols(predict(netflix_movie_stack_model_members, .))
+
+netflix_movie_test_prob <- movie_orig_test %>% 
+  bind_cols(predict(netflix_movie_stack_model_members, ., type = "prob"))
+```
+
+```{r}
+autoplot(roc_curve(netflix_movie_test_prob, truth = as.factor(netflix_original_proxy), estimate = .pred_0))
+```
+
+WHAT?!! This is crazy good fit for a single random forest.
+
+```{r}
+accuracy(netflix_movie_test_class, truth = as.factor(netflix_original_proxy), estimate = .pred_class)
+```
+
+Whoa! 99% accuracy.
+
+Let's pull the single random forest that being used to explore an importance plot.
+
+Still need to get the logistic regression and XG Boost to work, but random forest is clearly a strong candidate.

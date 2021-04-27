@@ -23,6 +23,7 @@ library(correlation)
 library(lubridate)
 library(DataExplorer)
 library(SmartEDA)
+library(vip)
 theme_set(theme_classic())
 ```
 
@@ -117,18 +118,17 @@ netflix_m_select_wide <- netflix_m_genre_wide %>%
   mutate(netflix_original_proxy = ifelse(date_diff == 0, 1, 0))
 
 ## binary outcome of proxy Netflix Original
-netflix_m_select_wide_NOdate_diff <- netflix_m_select_wide %>% 
-  select(-date_diff) %>% 
-  mutate(netflix_original_proxy = as.factor(netflix_original_proxy)) %>% 
-  filter(rating > 6)
+netflix_m_select_wide_genres_only <- netflix_m_select_wide %>% 
+  select(netflix_original_proxy, dramas:anime_features) %>% 
+  mutate(netflix_original_proxy = as.factor(netflix_original_proxy))
 
-skimr::skim(netflix_m_select_wide_NOdate_diff)
-netflix_m_select_wide_NOdate_diff %>% count(rating)
+skimr::skim(netflix_m_select_wide_genres_only)
+#netflix_m_select_wide_genres_only %>% count(rating)
 ```
 
 ```{r}
 set.seed(420) ## YEAH! Only for today!
-movies_split_orig <- initial_split(netflix_m_select_wide_NOdate_diff, strata = netflix_original_proxy)
+movies_split_orig <- initial_split(netflix_m_select_wide_genres_only, strata = netflix_original_proxy)
 movie_orig_train <- training(movies_split_orig)
 movie_orig_test <- testing(movies_split_orig)
 
@@ -167,8 +167,7 @@ movie_orig_rec <- recipe(netflix_original_proxy ~ ., data = movie_orig_train) %>
   #step_num2factor(all_predictors(), levels = c("No", "Yes")) %>%
   #step_modeimpute(all_nominal(), -all_outcomes()) %>% 
   #step_knnimpute(all_predictors(), neighbors = 5) %>% 
-  step_zv(all_numeric()) %>% 
-  step_dummy(rating)
+  step_zv(all_numeric())
 
 metric <- metric_set(roc_auc, accuracy, kap, pr_auc, mn_log_loss)
 ```
@@ -203,7 +202,7 @@ knn_res <- tune_grid(
   metrics = metric,
   grid = 4,
   control = ctrl_grid
-); beepr::beep(8)
+)#; beepr::beep(8)
 ```
 
 ## Penalized regression
@@ -369,8 +368,46 @@ WHAT?!! This is crazy good fit for a single random forest.
 accuracy(netflix_movie_test_class, truth = as.factor(netflix_original_proxy), estimate = .pred_class)
 ```
 
-Whoa! 99% accuracy.
+Hmm, 70% accuracy
 
-Let's pull the single random forest that being used to explore an importance plot.
+Let's pull the best random forest that's being used to explore an importance plot.
 
 Still need to get the logistic regression and XG Boost to work, but random forest is clearly a strong candidate.
+
+### The Best Random Forest
+
+I pulled out the best random forest model, which nearly matches the accuracy of the base rate of ~70%. The ensemble models provides a better prediction (based on accuracy) by about 3% (~73%), but cannot be easily interpreted using a feature importance plot.
+
+```{r}
+param_final_rf <- rf_fit %>% select_best(metric = "accuracy")
+```
+
+```{r}
+tune_final_wf <- tune_wf %>% finalize_workflow(param_final_rf)
+
+rf_fit_final <- tune_final_wf %>% last_fit(movies_split_orig)
+
+rf_performance <- rf_fit_final %>% collect_metrics()
+
+rf_predictions <- rf_fit_final %>% collect_predictions()
+
+rf_predictions %>% 
+  conf_mat(truth = netflix_original_proxy, estimate = .pred_class)
+
+rf_predictions %>%
+  ggplot() +
+  geom_density(aes(x = .pred_class, fill = netflix_original_proxy), alpha = .5)
+
+final_rf <- fit(tune_final_wf, netflix_m_select_wide_genres_only)
+
+ranger_rf <- pull_workflow_fit(final_rf)$fit
+
+vi(ranger_rf)
+vi_rf <- ranger_rf$variable.importance
+
+vip(ranger_rf, geom = "point")
+
+
+```
+
+The genre "stand-up comedy" provides the highest importance. In this model, stand-up comedy is used in deciding whether or not a movie is a proxy Netflix Original more often than most any other feature. International movies are the next most important (or most often used) feature in predicting if a Netflix movie is an original or not.

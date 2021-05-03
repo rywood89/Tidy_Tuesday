@@ -2,7 +2,11 @@
 title: "Netflix Netflix Netflix"
 author: "Ryan Woodbury"
 date: "4/20/2021"
-output: html_document
+output: 
+  html_document:
+    code_folding: hide
+    keep_md: true
+    latex_engine: xelatex
 ---
 
 ```{r setup, include=FALSE}
@@ -402,7 +406,7 @@ final_rf <- fit(tune_final_wf, netflix_m_select_wide_genres_only)
 
 ranger_rf <- pull_workflow_fit(final_rf)$fit
 
-vi(ranger_rf)
+#vi(ranger_rf)
 vi_rf <- ranger_rf$variable.importance
 
 vip(ranger_rf, geom = "point")
@@ -411,3 +415,5 @@ vip(ranger_rf, geom = "point")
 ```
 
 The genre "stand-up comedy" provides the highest importance. In this model, stand-up comedy is used in deciding whether or not a movie is a proxy Netflix Original more often than most any other feature. International movies are the next most important (or most often used) feature in predicting if a Netflix movie is an original or not.
+
+So what does this mean? There is currently no outcome variables attached to this data set for Netflix to use to make a decisions. However, if you are a stand-up comedian, perhaps you should call Netflix to see if they will stream your show!

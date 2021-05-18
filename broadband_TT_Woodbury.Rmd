@@ -1,0 +1,102 @@
+---
+title: "Broadband coverage"
+author: "Ryan Woodbury"
+date: "5/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidytuesdayR)
+library(janitor)
+library(tigris)
+library(ggthemes)
+library(zipcodeR)
+library(ggiraph)
+```
+
+
+
+```{r}
+# Get the Data
+
+# Read in with tidytuesdayR package 
+# Install from CRAN via: install.packages("tidytuesdayR")
+# This loads the readme and all the datasets for the week of interest
+
+# Either ISO-8601 date or year/week works!
+
+#tuesdata <- tidytuesdayR::tt_load('2021-05-11')
+#tuesdata <- tidytuesdayR::tt_load(2021, week = 20)
+
+#broadband <- tuesdata$broadband
+
+# Or read in the data manually
+
+broadband <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-05-11/broadband.csv')
+
+broadband_zip <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-05-11/broadband_zip.csv')
+```
+
+```{r}
+glimpse(broadband)
+glimpse(broadband_zip)
+```
+
+```{r}
+broadband_clean <- broadband %>% 
+  janitor::clean_names() %>% 
+  filter(broadband_availability_per_fcc != "-",
+         broadband_usage != "-") %>% 
+  mutate(county_id = as.character(county_id),
+         broadband_availability_per_fcc = parse_number(broadband_availability_per_fcc),
+         broadband_usage = parse_number(broadband_usage),
+         usage_available = broadband_usage/broadband_availability_per_fcc,
+         broadband_diff = broadband_availability_per_fcc - broadband_usage,
+         broadband_diff = if_else(broadband_diff < 0, 0, broadband_diff))
+
+summary(broadband_clean)
+glimpse(broadband_clean)
+```
+
+```{r}
+usa_counties <- counties(state = state.name, cb = T) %>% 
+  janitor::clean_names()
+head(usa_counties)
+View(usa_counties)
+```
+
+```{r}
+#`%notIn%` <- Negate(`%in%`)
+broadband_counties <- usa_counties %>%
+  left_join(broadband_clean, by = c("geoid" = "county_id"))
+
+UT_counties <- broadband_counties %>% 
+  filter(st == "UT")
+
+IN_counties <- broadband_counties %>% 
+  filter(st == "IN")
+```
+
+```{r}
+ggplot(UT_counties, aes(fill = broadband_usage)) +
+  geom_sf() +
+  theme_void()
+
+IN_plot <- ggplot(IN_counties) +
+  geom_sf_interactive(aes(fill = broadband_usage,
+                          tooltip = paste0("County Name: ", county_name, "<br>Usage: ", broadband_usage),
+                          data_id = county_name)) +
+  theme_void() +
+  scale_fill_continuous(name = "Broadband Usage", )
+girafe(ggobj = IN_plot)
+```
+
+
+
+
+

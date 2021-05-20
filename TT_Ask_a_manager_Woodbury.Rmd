@@ -1,0 +1,190 @@
+---
+title: "Salary (Ask a Manager)"
+author: "Ryan Woodbury"
+date: "5/18/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidytuesdayR)
+library(janitor)
+#library(tigris)
+library(ggthemes)
+#library(zipcodeR)
+library(ggiraph)
+library(gt)
+library(tidytext)
+
+theme_set(theme_minimal())
+```
+
+```{r}
+survey <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-05-18/survey.csv')
+
+```
+
+### Main Question
+
+How accurate can we predict the gender of a respondent?
+What is the most important factor in determining annual salary?
+
+### Explore the data using Data Explorer
+
+```{r}
+glimpse(survey)
+skimr::skim(survey)
+
+#DataExplorer::create_report(survey, output_file = "report_gender.html", y = "gender")
+
+#DataExplorer::create_report(survey, output_file = "report_salary.html", y = "annual_salary")
+```
+
+There are a lot more women in this data set than any other gender category. There are also a lot of categorical variables. Only `annual_salary` is a numerical value. Several variables have severe missingness, likely due to not being applicable to the respondent. For example, `currency_other` is a text variable that only needed to be filled out if a particular currency option was not available from the list of provided currencies. We will likely filter some of the data to get a clearer boundary of the data and questions we are asking.
+
+
+#### Filtering
+
+We are only going to keep USA-based respondents and drop variables that are not applicable to USA-based respondents.
+
+
+GAH! Country was an open-response question! There are USA flag emojis!
+
+I probably could have fuzzy matched this, but I feel like I can catch the variety of odd responses better mannually.
+
+```{r}
+USAs <- c("🇺🇸", "america", "usa", "us", "us of a", "the us", "u. s", "u. s.", "u.s", "u.s.", "u.s.a", "u.s.a", "u.s>", "u.sa", "uniited states", "united states", "unite states", "united sates", "united sates of america", "united stares", "united state", "united state of america", "united statea", "united stated", "united Stateds", "united Statees", "united  states", "united states of america", "united states of american", "united states of americas", "united statesp", "united statew", "united statss", "united stattes", "united statues", "united status", "united statws", "united sttes", "united y", "unitedstates", "uniteed states", "unitef stated", "uniter statez", "unites states", "unitied states", "uniyed states", "uniyes states", "unted states", "untied states")
+
+```
+
+```{r}
+survey_filter <- survey %>%
+  mutate(country = str_to_lower(country)) %>% 
+  filter(country %in% USAs) %>% 
+  mutate(gender = case_when(gender == "Other or prefer not to answer" | gender == "Prefer not to answer" | is.na(gender) ~ "Other/No answer", 
+                            TRUE ~ gender))
+
+survey_USD <- survey %>% 
+  select(how_old_are_you, currency, annual_salary, state:race) %>% 
+  filter(currency == "USD") %>% 
+  mutate(gender = case_when(gender == "Other or prefer not to answer" | gender == "Prefer not to answer" | is.na(gender) ~ "Other/No answer", 
+                            TRUE ~ gender))
+
+dim(survey)
+dim(survey_filter)
+dim(survey_USD)
+
+dim(survey)[1] - dim(survey_filter)[1] # losing 4609
+dim(survey)[1] - dim(survey_USD)[1] # losing 4380
+```
+
+The USD-filtered data included some respondents that converted their currency to USD, which added some outliers. I'll just use my USA-nomers filter.
+
+Also, just to get a count of each re-marked gender categories:
+
+```{r}
+gender_count <- survey_filter %>% 
+  count(Gender = gender, name = "Count") %>% 
+  mutate(Proportion = prop.table(Count))
+
+gender_count %>% 
+  arrange(desc(Count)) %>% 
+  gt() %>%
+  tab_header(title = "Count and Proportion of Gender") %>% 
+  fmt_number(columns = "Proportion")
+```
+
+
+
+```{r}
+# survey_USD %>% 
+#   ggplot(aes(gender, annual_salary), fill = "red") +
+#   geom_violin() +
+#   scale_y_log10(labels = scales::label_dollar())
+
+# survey_filter %>% 
+#   ggplot(aes(gender, annual_salary)) +
+#   geom_violin(fill = "red") +
+#   scale_y_continuous(labels = scales::label_dollar())
+
+survey_filter %>% 
+  ggplot(aes(reorder(gender, annual_salary), annual_salary, fill = gender)) +
+  geom_violin(color = "black", size = .5, show.legend = F) +
+  stat_summary(aes(gender, annual_salary, group = gender), fun = median, show.legend = F, shape = 18, color = "grey") +
+  scale_fill_viridis_d() +
+  scale_y_log10(labels = scales::label_dollar()) +
+  labs(title = paste("The Annual Salary Medians", "(diamonds)", "are Nearly Equal", sep = " "),
+       subtitle = "Log-transformed Annual Salary by Gender",
+       x = NULL,
+       y = "Log(Annual Salary)")
+```
+
+```{r, eval = F}
+survey_USD %>% 
+  filter(annual_salary < 3000000) %>% 
+  ggplot(aes(annual_salary)) + 
+  geom_histogram(binwidth = 100000) +
+  scale_x_continuous(labels = scales::dollar)
+
+
+survey_USD %>% 
+  filter(annual_salary > 2000000) %>% 
+  ggplot(aes(annual_salary, gender)) + 
+  geom_jitter() +
+  scale_x_continuous(labels = scales::dollar)
+```
+
+After thinking about what I want to predict, I would rather attempt to predict annual salary of USA-based respondents instead of gender. This way gender can be used as a feature in understanding annual salary.
+
+And for now, I want to just use a linear regression to identify key features in predicting annual salary. I am prioritizing explanability over prediction.
+
+### Model prep
+
+Let me clean the data some more prior to splitting and modeling
+
+```{r}
+survey_clean <- survey_filter %>% 
+  select(where(~mean(!is.na(.x)) > .5), -c(country, other_monetary_comp, currency, timestamp)) 
+
+survey_clean %>% 
+  mutate(state = str_to_lower(state),
+         city = str_to_lower(city)) %>% 
+  #separate(race, into = c("race1", "race2", "race3"), sep = "(?<=n),|(?<=e),", remove = F) %>% 
+  unnest_tokens(output = race_word, input = race) %>%
+  unnest_tokens(output = job_title_words, input = job_title) %>% 
+  unnest_tokens(output = industry_words, input = industry) %>%
+  anti_join(stop_words, by = c("race_word" = "word")) %>% 
+  anti_join(stop_words, by = c("job_title_words" = "word")) %>% 
+  anti_join(stop_words, by = c("industry_words" = "word")) %>%
+  filter(race_word != "american") %>% 
+    pivot_longer(c(race_word, job_title_words, industry_words)) %>% #head()
+  group_by(name) %>% 
+  count(value, name) %>% 
+  slice_max(n, n = 15) %>% 
+  ungroup() %>% #head()
+  mutate(value = reorder_within(value, n, name)) %>% 
+    ggplot(aes(n, value, fill = name)) + 
+    geom_col(show.legend = F, alpha = .8) +
+    scale_y_reordered() +
+    facet_wrap(~name, scales = "free") +
+  labs(x = "Word frequency",
+       y = NULL,
+       title = "Top words in Industry, Job Title, and Race text responses",
+       subtitle = "Removed stopwords and 'american' in Race")
+
+## I can tokenize during the workflow. Thanks Julia Silge and Emil Hvitfeldt!
+```
+
+Thanks to Julia Silge and Emil Hvitfeldt, I can do a lot of the NLP prep work within the tidymodels framework and workflow! Check out their websites: [juliasilge.com](https://juliasilge.com/) and [hvitfeldt.me](https://www.hvitfeldt.me/) as well as their new book [Supervised Machine Learning for Text Analysis in R](https://smltar.com/)
+
+I don't like how race is treated in the tokenization. They are already pre-made categories. I would like to just use those instead of tokenizing. Try `separate_rows()`.
+
+```{r}
+survey_ready <- survey_clean %>% 
+  separate(race, into = c("race1", "race2", "race3"), sep = "(?<=n),|(?<=e),", remove = F)
+```
+

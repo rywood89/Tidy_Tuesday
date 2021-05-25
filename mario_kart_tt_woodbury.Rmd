@@ -55,6 +55,12 @@ summary(records_clean)
 ```
 
 ```{r}
+records_clean <- records %>% 
+  filter(type == "Three Lap",
+         shortcut == "No",
+         #system_played == "NTSC"
+         )
+
 fastest_records <- records_clean %>% 
   group_by(track) %>% 
   summarise(fastest_time = min(time)) %>%
@@ -65,15 +71,16 @@ fastest_records <- records_clean %>%
   geom_point_interactive(aes(fastest_time, fct_reorder(track, fastest_time), color = track, tooltip = paste0("Track name: ", track,
                                                                                                              "<br>Record Holder: ", player,
                                                                                                              "<br>Time: ", time_period,
-                                                                                                             "<br>Duration of Record: ", record_duration,
-                                                                                                             "<br>Record made: ", date)), show.legend = F, size = 2) +
+                                                                                                             "<br>Duration of Record (in days): ", record_duration,
+                                                                                                             "<br>Record made: ", ymd(date))), show.legend = F, size = 2) +
   scale_y_reordered() +
   scale_x_time() + 
   #scale_color_brewer(palette = "Spectral") +
-  labs(x = "Time",
-      y = "Track Name",
+  labs(x = NULL,
+      y = NULL,
       title = "Is Rainbow Road Really That Difficult?",
-      subtitle = "Fastest Record Times for Each Track")
+      subtitle = "Fastest Record Times for Each Track",
+      caption = "Tidy Tuesday May 25, 2021 | Plot by Ryan Woodbury | Data from Benedikt Claus")
 
 girafe(ggobj = fastest_records)
 ```

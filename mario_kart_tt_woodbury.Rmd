@@ -1,0 +1,80 @@
+---
+title: "Mario Kart (Tidy Tuesday)"
+author: "Ryan Woodbury"
+date: "5/25/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+I would love to build a visualization that shows the different tracks based on their average speed of professional racers in 3-lap races.
+
+### Load the libraries
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ggiraph)
+
+theme_set(theme_classic())
+```
+
+
+### Get the data
+
+```{r}
+records <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-05-25/records.csv')
+drivers <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-05-25/drivers.csv')
+```
+
+Records data
+
+```{r}
+glimpse(records)
+summary(records)
+```
+
+```{r}
+glimpse(drivers)
+summary(drivers)
+```
+
+
+
+I want to know which track has the fastest three-lap record and fastest one-lap record, non-shortcut, NTSC time. Maybe add a tooltip that includes how long it took break the record, and who holds the current record.
+
+
+```{r}
+records_clean <- records %>% 
+  filter(type == "Three Lap",
+         shortcut == "No",
+         #system_played == "NTSC"
+         )
+summary(records_clean)
+```
+
+```{r}
+fastest_records <- records_clean %>% 
+  group_by(track) %>% 
+  summarise(fastest_time = min(time)) %>%
+  ungroup() %>% 
+  left_join(records_clean, by = c("track" = "track", "fastest_time" = "time")) %>% 
+  #mutate(fastest_time = fastest_time/60) %>% 
+  ggplot() +
+  geom_point_interactive(aes(fastest_time, fct_reorder(track, fastest_time), color = track, tooltip = paste0("Track name: ", track,
+                                                                                                             "<br>Record Holder: ", player,
+                                                                                                             "<br>Time: ", time_period,
+                                                                                                             "<br>Duration of Record: ", record_duration,
+                                                                                                             "<br>Record made: ", date)), show.legend = F, size = 2) +
+  scale_y_reordered() +
+  scale_x_time() + 
+  #scale_color_brewer(palette = "Spectral") +
+  labs(x = "Time",
+      y = "Track Name",
+      title = "Is Rainbow Road Really That Difficult?",
+      subtitle = "Fastest Record Times for Each Track")
+
+girafe(ggobj = fastest_records)
+```
+

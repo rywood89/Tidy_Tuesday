@@ -1,0 +1,231 @@
+---
+title: "USA City Parks Information Comparison"
+author: "Ryan Woodbury"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE)
+
+library(tidyverse)
+library(ggiraph)
+library(ggbeeswarm)
+library(glue)
+library(patchwork)
+library(cluster)
+library(NbClust)
+library(mclust)
+library(factoextra)
+library(corrplot)
+
+theme_set(theme_classic())
+```
+
+```{r data, include=F}
+parks <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-06-22/parks.csv')
+```
+
+```{r quick_clean}
+parks <- parks %>% 
+  mutate(city = ifelse(city == "Washington, DC", "Washington, D.C.", city),
+         city = ifelse(city == "Charlotte/Mecklenburg County", "Charlotte", city))
+
+parks_2020 <- parks %>% 
+  filter(year == 2020)
+```
+
+```{r parks_points}
+parks_points <- parks %>% 
+  select(year, rank, city, city_dup, ends_with("points"))
+```
+
+
+
+```{r parks_data}
+parks_count <- parks %>% 
+  select(!ends_with("points"))
+
+parks_count_2020 <- parks_count %>% 
+  filter(year == 2020)
+
+parks_count_2020_clean <- parks_count_2020 %>% 
+  select(-park_benches) %>% 
+  mutate(park_pct_city_data = str_remove(park_pct_city_data, "%") %>% as.numeric(.),
+         pct_near_park_data = str_remove(pct_near_park_data, "%") %>% as.numeric(.),
+         spend_per_resident_data = str_extract(spend_per_resident_data, "\\d+") %>% as.numeric(.)) %>% 
+  select(-c(year, city_dup))
+
+## Even though I've split the data, I think I'll still use the full data set, espeically when it comes to using normalized data for analysis and plotting, but using raw data for labels and annotations.
+
+```
+
+
+```{r correlations, eval = F}
+parks_2020_cor <- parks_2020 %>% 
+  select(ends_with("points")) %>% 
+  #select_if(is.numeric) %>% 
+  #t() %>% 
+  cor(., use = "pairwise")
+
+corrplot::corrplot(parks_2020_cor, order = "AOE", type = "lower", diag = FALSE, addCoef.col = "grey")
+
+```
+
+
+```{r, eval = F}
+lista.methods = c("kl","ch","gap","cindex", "db", "silhouette", "duda","pseudot2","beale","ratkowsky")
+
+parks_cluster_data <- parks_2020 %>% 
+  select(ends_with("points"), -total_points)
+
+library(parallel)
+best.clusters<-mclapply(lista.methods, function(d) {nb = NbClust(parks_cluster_data, distance = "euclidean",
+             min.nc = 2, max.nc = 8, 
+             method = "kmeans", index =d)
+res<-data.frame(cbind(index = d, best_cluster=nb$Best.nc[1]))
+return(res)
+print(paste0("index ", d, " complete"))
+}, mc.cores=4); beepr::beep(3)
+
+# best.clusters
+
+## 2 clusters.
+```
+
+```{r, eval = F}
+park_2 <- kmeans(parks_cluster_data, 2)
+
+fviz_cluster(park_2, parks_cluster_data)
+
+```
+
+```{r, eval = F}
+park_2$centers
+
+## There are some distinguishing characteristics of the parks. Let's see how that maps onto the rank and total points.
+```
+
+
+```{r, eval = F}
+parks_bic_test <- mclustBIC(parks_cluster_data, G = 2:9); beepr::beep(3)
+
+#parks_bic_test
+
+## 2 clusters
+```
+
+```{r, eval = F}
+parks_cluster_data %>% 
+  #sample_n(size = 1500) %>% 
+  mutate(across(everything(), scale)) %>% 
+  clusGap(., FUN = pam, B = 300, K.max = 6);beepr::beep(3)
+
+## 1 cluster?
+```
+
+```{r cluster_calculation, eval = F}
+parks_2cluster <- pam(parks_cluster_data %>% 
+  mutate(across(everything(), scale)), k = 2)
+
+#summary(pam_3)
+
+fviz_cluster(parks_2cluster, parks_count_2020_clean %>% select(-c(rank, city, park_benches, total_pct)))
+```
+
+
+```{r cluster_set, eval = F}
+parks_cluster <- parks_2020 %>% 
+  mutate(cluster = as.factor(park_2$cluster)) # this works because the data are in the same order.
+
+ggplot(parks_cluster) +
+  aes(x = rank, group = cluster, fill = cluster) +
+  geom_density(alpha = .5, show.legend = T)
+
+## There is a distinct set of parks. 
+## The top ranked parks fall in cluster 2 and are more closely grouped together, while cluster 1 are typically not ranked as high.
+
+### After all this clustering, I don't think I'm going to use any of it. It doesn't quite get at the question I want to answer and it would be to much for the product.
+```
+
+
+
+
+
+```{r}
+####### Begin graphs! ##########
+
+### All graphs will be using 'points' to plot and raw data for labels.
+```
+
+```{r park_size_and_pct}
+park_size_pct_plot <- 
+  ggplot(parks_2020) +
+  geom_point_interactive(aes(x = med_park_size_points, 
+                             y = park_pct_city_points,
+                             tooltip = glue("City: {city}\nRank: {rank}\nTotal Score: {total_points}\nMedian Park Size: {med_park_size_data} arces\nPct of City Area: {park_pct_city_data}"),
+                             data_id = city)) +
+  labs(title = str_wrap("Park Size by % of City", 25),
+       #subtitle = "",
+       x = "Median Park Size",
+       y = "Parkland as % of City Area")
+```
+
+
+```{r pct_near_park}
+
+# Percent near park comparison
+
+pct_near_park_plot <- parks_2020 %>% 
+  #select(city, pct_near_park_) %>% 
+  #janitor::clean_names(case = "title") %>% 
+  #pivot_longer(-City) %>%
+ggplot(aes(x = pct_near_park_points, y = fct_reorder(city, pct_near_park_points), group = city)) +
+  ## All cities
+  geom_col_interactive(
+    aes(tooltip = glue("City: {city}\nRank: {rank}\nTotal Score: {total_points}\n% of Residents within 10 mins: {pct_near_park_points}"),
+        data_id = city), 
+        color = "grey",
+        alpha = .5) +
+  labs(title = str_wrap("% of Residents Within 10 mins of Park", 25),
+       #subtitle = stringr::str_glue("{params$city} is ranked {parks_count_2020_clean %>%  filter(city == params$city) %>% select(rank)} out of 100"),
+       x = "% of residents",
+       y = "") +
+  theme(axis.text.y = element_text(size = 7))
+
+```
+
+```{r amenities}
+pivot_parks_2020 <- parks_2020 %>%
+  select(-c(year, city_dup, park_benches, med_park_size_data, med_park_size_points, pct_near_park_data, pct_near_park_points, park_pct_city_data, park_pct_city_points, spend_per_resident_data, spend_per_resident_points, amenities_points)) %>% 
+  mutate(across(everything(), ~as.character(.))) %>% 
+  pivot_longer(-c(city, rank, total_points, total_pct),
+               names_to = c("name", "type"),
+               names_pattern = "(.*)_(data|points)")
+
+amenities_plot <- ggplot() +
+  geom_point_interactive(
+    data = filter(pivot_parks_2020, type == "points"), 
+    aes(x = as.numeric(value), 
+        y = name, 
+        tooltip = glue("City: {city}\nRank: {rank}\nTotal Score: {total_points}\n{stringr::str_to_title(name)}: {value}"),
+        data_id = city)) +
+  labs(title = "Amenities",
+       x = "Normalized Amenities Score",
+       y = NULL) +
+  scale_y_discrete(label = function(y) janitor::make_clean_names(y,case = "title"))
+```
+
+
+
+```{r}
+# girafe(code = print(pct_near_park_plot))
+# girafe(code = print(park_size_pct_plot))
+girafe(code = print((pct_near_park_plot) / (park_size_pct_plot | amenities_plot)), 
+       width_svg = 9, 
+       height_svg = 5,
+       options = list(
+         opts_hover(css = "fill:read;stroke:orange;r:3pt;w:3pt"),
+         opts_hover_inv(css = "fill:grey;stroke:grey;r:.5pt")))
+```

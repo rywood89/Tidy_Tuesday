@@ -4,16 +4,24 @@ author: "Ryan Woodbury"
 output: html_document
 ---
 
+```{r, include = F}
+# Three different questions
+## 1. What are the distinguishing features of top ranked parks in 2020?
+## 2. Data explorer for most recent year (2020)
+## 3. Paramaterized reports
+```
+
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE,
                       warning = FALSE,
                       message = FALSE)
 
-library(tidyverse)
-library(ggiraph)
+library(tidyverse) #
+library(ggiraph) #
 library(ggbeeswarm)
-library(glue)
-library(patchwork)
+library(glue) #
+library(patchwork) #
 library(cluster)
 library(NbClust)
 library(mclust)
@@ -75,6 +83,8 @@ corrplot::corrplot(parks_2020_cor, order = "AOE", type = "lower", diag = FALSE, 
 
 
 ```{r, eval = F}
+## 1. What are the distinguishing features of city parks in 2020?
+
 lista.methods = c("kl","ch","gap","cindex", "db", "silhouette", "duda","pseudot2","beale","ratkowsky")
 
 parks_cluster_data <- parks_2020 %>% 
@@ -157,6 +167,8 @@ ggplot(parks_cluster) +
 ####### Begin graphs! ##########
 
 ### All graphs will be using 'points' to plot and raw data for labels.
+
+## 2. Data explorer for 2020 data
 ```
 
 ```{r park_size_and_pct}
@@ -164,7 +176,7 @@ park_size_pct_plot <-
   ggplot(parks_2020) +
   geom_point_interactive(aes(x = med_park_size_points, 
                              y = park_pct_city_points,
-                             tooltip = glue("City: {city}\nRank: {rank}\nTotal Score: {total_points}\nMedian Park Size: {med_park_size_data} arces\nPct of City Area: {park_pct_city_data}"),
+                             tooltip = glue("City: {city}\nRank: {rank}\nTotal Score: {total_points}\nAvg. Amount Spent/Resident: {spend_per_resident_data}\nMedian Park Size: {med_park_size_data} arces\nPct of City Area: {park_pct_city_data}"),
                              data_id = city)) +
   labs(title = str_wrap("Park Size by % of City", 25),
        #subtitle = "",
@@ -184,15 +196,15 @@ pct_near_park_plot <- parks_2020 %>%
 ggplot(aes(x = pct_near_park_points, y = fct_reorder(city, pct_near_park_points), group = city)) +
   ## All cities
   geom_col_interactive(
-    aes(tooltip = glue("City: {city}\nRank: {rank}\nTotal Score: {total_points}\n% of Residents within 10 mins: {pct_near_park_points}"),
+    aes(tooltip = glue("City: {city}\nRank: {rank}\nTotal Score: {total_points}\nAvg. Amount Spent/Resident: {spend_per_resident_data}\n% of Residents within 10 mins: {pct_near_park_points}"),
         data_id = city), 
         color = "grey",
-        alpha = .5) +
+        alpha = .5, width = .5) +
   labs(title = str_wrap("% of Residents Within 10 mins of Park", 25),
        #subtitle = stringr::str_glue("{params$city} is ranked {parks_count_2020_clean %>%  filter(city == params$city) %>% select(rank)} out of 100"),
        x = "% of residents",
        y = "") +
-  theme(axis.text.y = element_text(size = 7))
+  theme(axis.text.y = element_text(size = 7, margin = margin(5,.1,5,.1, "cm")))
 
 ```
 
@@ -223,8 +235,8 @@ amenities_plot <- ggplot() +
 # girafe(code = print(pct_near_park_plot))
 # girafe(code = print(park_size_pct_plot))
 girafe(code = print((pct_near_park_plot) / (park_size_pct_plot | amenities_plot)), 
-       width_svg = 9, 
-       height_svg = 5,
+       width_svg = 8, 
+       height_svg = 8,
        options = list(
          opts_hover(css = "fill:read;stroke:orange;r:3pt;w:3pt"),
          opts_hover_inv(css = "fill:grey;stroke:grey;r:.5pt")))

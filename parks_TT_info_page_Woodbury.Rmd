@@ -176,7 +176,7 @@ park_size_pct_plot <-
   ggplot(parks_2020) +
   geom_point_interactive(aes(x = med_park_size_points, 
                              y = park_pct_city_points,
-                             tooltip = glue("City: {city}\nRank: {rank}\nTotal Score: {total_points}\nAvg. Amount Spent/Resident: {spend_per_resident_data}\nMedian Park Size: {med_park_size_data} arces\nPct of City Area: {park_pct_city_data}"),
+                             tooltip = glue("City: {city}\nRank: {rank}\nTotal Score: {total_points}\nAvg. Amount Spent/Resident: {spend_per_resident_data}\nMedian Park Size: {med_park_size_points} ({med_park_size_data} arces)\nPct of City Area: {park_pct_city_points} ({park_pct_city_data})"),
                              data_id = city)) +
   labs(title = str_wrap("Park Size by % of City", 25),
        #subtitle = "",

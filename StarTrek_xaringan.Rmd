@@ -1,8 +1,7 @@
 ---
 title: "Starship Computer Command Training"
-subtitle: "How to avoid errors"
-author: "Ryan Woodbury"
-institute: "Imperial Academy"
+subtitle: "Your Greatest Asset"
+author: "Starfleet Command"
 date: "`r Sys.Date()`"
 output:
   xaringan::moon_reader:
@@ -113,6 +112,8 @@ computer %>%
     )
 ```
 
+---
+# Exploring the Computer communication data
 
 ---
 class: middle, center
@@ -134,6 +135,12 @@ computer %>%
 
 ???
 Non-verbal responses
+---
+class: center, middle
+
+# [Type of words and non-verbal responses](https://twitter.com/FGazzelloni/status/1427764709357461504/photo/1)
+By:Federica Gazzelloni (@FGazzelloni)
+
 ---
 class: center, middle
 
@@ -173,6 +180,13 @@ computer %>%
 
 ???
 Domain & Sub-domain
+---
+
+class: center, middle
+
+# [Most common interaction by domain](https://twitter.com/isitmanu/status/1428018552796327942/photo/1)
+By: Manu Alcala Kovalski (@isitmanu)
+
 ---
 class: middle, center
 
@@ -230,6 +244,12 @@ computer %>%
 - Speaker (person)
 
 ---
+class: center, middle
+
+# [Who is speaking?](https://twitter.com/moriah_taylor58/status/1428528721317744640/photo/1)
+By: Moriah Taylor (@moriah_taylor58)
+
+---
 class: middle, center
 # Learning about the errors
 ### With over 1300 unique human-computer transactions, only 6 contained errors
@@ -243,9 +263,13 @@ class: middle
 - system damage, or
 - unclear dialogue
 
+
+???
+## We find that our models provide decent information about what to avoid
 ---
 
 class: center, middle
+
 
 ```{r echo=F, message=FALSE, warning=FALSE, error=FALSE, tidy=TRUE}
 
@@ -369,6 +393,9 @@ lr_fit %>%
 
 ???
 ML chart
+What is ROC_AUC: 
+- specificity:
+- sensitivity:
 ---
 class: center, middle
 

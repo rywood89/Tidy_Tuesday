@@ -452,3 +452,26 @@ importances %>%
   mutate(Feature = fct_reorder(Feature, Gain)) %>% 
   ggplot(aes(Gain, Feature)) +
   geom_col()
+
+
+
+### TidyTuesday code from Roger
+library(wordcloud2)
+
+my_words <- computer %>% unnest_tokens(word, line)
+my_words %>% count(word, sort=T)
+my_words %>% anti_join(stop_words)
+my_words %>% anti_join(stop_words) %>% 
+  count(word, sort = T)
+
+my_words %>% 
+  anti_join(stop_words) %>% 
+  count(word) %>% 
+  wordcloud2::wordcloud2()
+
+#filter off the biggest
+my_words %>%
+  anti_join(stop_words) %>%
+  count(word) %>%
+  filter(n<200) %>%
+  wordcloud2()
